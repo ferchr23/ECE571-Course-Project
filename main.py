@@ -3,7 +3,7 @@ import pandas as pd
 import os
 import glob
 
-SEED = 42
+SEEDS = [42, 789, 256]
 
 def load_data(data_folder:str) -> pd.DataFrame:
     """Finds all .xlsx files in the data folder and loads required sheets from the first one as a dictionary of DataFrames.
@@ -52,15 +52,61 @@ data["amhst"] = data["amhst"].dropna(subset=["Output Power"])
 
 
 # ----------- Problem 1: Supervised Classification -------------
+# Sky-condition class: Multi-class (3) - classify from Clear-Sky Index k = GHI / Clearsky GHI
+#   Clear: 0.85<=k<=1.0, Partly Cloudy: 0.4<=k<0.85, Cloudy: k<0.4
+#   Must exclude GHI and Clearsky GHI as features, as they define the label
+# Generation-regime class: Multi-class (3) - classify Output Power into Low / Medium / High for each city
+
+# Balanced accuracy - mean of per-class recall. Prefer over raw accuracy
+# Make a confusion matrix, per-class metrics, find sky/regime classes that are the hardest to classify
+
+# Use KNN, Ensemble of Naive Bayes with Bagging, maybe randomForest of decision trees, and use MLP as deep learning option
 
 
 # ------------- Problem 2: Supervised Regression ---------------
+# Predict Output Power from all 21 input features
+# 3 different setups: 
+#   1. Same-city: chronological 80/20 split in one city
+#   2. Cross-city (zero-shot): train on one city, test on another with no finetuning. Normalize per city
+#   3. Sequence variant: feed the last K=12 steps, predict the next Output Power (short-term forecast)
 
+# Root-mean-square-error (RMSE) or Mean-absolute-error (MAE) for each method and setup
+# Give every regression number as mean +/- std over >= 3 random seeds. Always report RMSE with nRMSE for cross-city result comparisons
+# Learning-curve, or prediction-vs-truth plot
+
+# Vector shaped data, don't use CNN or recurrent. Use Multilayer Perceptron (MLP) for deep learning solution. Use linear regression as a baseline
+
+# Sequence variant: Use Vanilla RNN and compare to LSTM and GRU variants
 
 # -------------- Problem 3: Dimension Reduction ----------------
+# Reduce feature vector to d = 2, 5, and 10 components, then use as inputs to Problem 1 and Problem 2 models
+# Choose d based on explained-variance curve / reconstruction error curve
+# Compare results with and without dimension reduction
 
+# Show reconstruction error for variational autoencoder (VAE) / autoencoder (AE), as well as explained-variance for PCA/KPCA
+#   Reconstruction MSE - mean squared error between original features (x) and reconstruction (x-hat), lower preserves more info
+#       Plot reconstruction MSE against the number of components, picking a number d at the elbow of the curve
+#   Explained-variance ratio - fraction of variance captured by first d components (1 is lossless), show the cumulative curve
+# Report classification balanced accuracy, and regression RMSE / MAE, comparing to the results without dimension reduction
+# Visualize with 2-d t-SNE or UMAP scatter colored by class labels or Output-Power bins
+#   Do nearest neighbors in the embedding space to visualize class separability and structure. Also just inspect scatter for separated structure
 
 # ----------- Problem 4: Semi-supervised Learning --------------
+# Pick base task (either problem 1 or 2)
+# Randomly withold labels so only 10%, 30%, and 50% of the data have labels for training
+# Test-set remains fully labeled for evaluation
 
+# Plot label-efficiency curve, comparing metric to % labels given
+# Compare model to a supervised-only model trained only on the % of data that has labels (ie ignore unlabeled data fro supervised baseline)
+#   Report gain over supervised-only at each fraction
+# Evaluate if at 10% labels, we outperform the supervised-only baseline
+# Area under curve (AUC) of label-efficiency curve
 
 # --------------- Problem 5: Transfer Learning -----------------
+# Source = Davis6, Target = Amhst3
+# Baselines to beat: Zero-shot = source model applied directly to target, Few-shot = model trained only on target
+# Target-domain FMSE/accuracy for Zero-shot, Few-shot, and Transfer Learning, in one table
+
+# Zero-shot performance - metric for Target for source trained model, no target fine-tuning
+# Few-shot performance - metric for Target after updating on k target samples (ex: k= 10, 50, 100)
+# Transfer Gain - gain = metric_target - metric_target_only_baseline (model trained only on target data)

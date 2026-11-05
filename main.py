@@ -1,11 +1,18 @@
 import torch
 import pandas as pd
+import numpy as np
 import os
 import glob
 
+from sklearn.naive_bayes import GaussianNB
+from sklearn.metrics import balanced_accuracy_score, confusion_matrix
+
+from preprocess import load_preprocessed_data
+from models import NaiveBayes
+
 SEEDS = [42, 789, 256]
 
-def load_data(data_folder:str) -> pd.DataFrame:
+def load_data(data_folder:str) -> dict:
     """Finds all .xlsx files in the data folder and loads required sheets from the first one as a dictionary of DataFrames.
 
     Returns:
@@ -41,19 +48,13 @@ def load_data(data_folder:str) -> pd.DataFrame:
     }
     return data
 
-# ----------- Load Data -----------
+# ----------- Load Preprocessed Data -----------
 data_folder = os.path.join(os.path.dirname(os.path.realpath(__file__)),"data")
-data = load_data(data_folder)
-print(f"Loaded data. Found {len(data)} datasets: {list(data.keys())}")
-
-# ----------- Preprocessing ----------------
-# Drop 4 missing output power rows in Amhst dataset
-data["amhst"] = data["amhst"].dropna(subset=["Output Power"])
-
+preprocessed_data = load_preprocessed_data(data_folder)
 
 # ----------- Problem 1: Supervised Classification -------------
 # Sky-condition class: Multi-class (3) - classify from Clear-Sky Index k = GHI / Clearsky GHI
-#   Clear: 0.85<=k<=1.0, Partly Cloudy: 0.4<=k<0.85, Cloudy: k<0.4
+#   Clear: 0.85<=k<=1.0, Partly-Cloudy: 0.4<=k<0.85, Cloudy: k<0.4
 #   Must exclude GHI and Clearsky GHI as features, as they define the label
 # Generation-regime class: Multi-class (3) - classify Output Power into Low / Medium / High for each city
 
@@ -61,6 +62,38 @@ data["amhst"] = data["amhst"].dropna(subset=["Output Power"])
 # Make a confusion matrix, per-class metrics, find sky/regime classes that are the hardest to classify
 
 # Use KNN, Ensemble of Naive Bayes with Bagging, maybe randomForest of decision trees, and use MLP as deep learning option
+
+
+# Sky condition classification - Clear-Sky Index (k) = GHI / Clearsky GHI
+# Same-city classification: chronological 75/25 split in each city
+for city in preprocessed_data.keys():
+    df = preprocessed_data[city]
+    
+    train_df = df.iloc[:int(len(df)*0.75)]
+    train_labels = train_df['Sky Condition'].to_numpy()
+    train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Cloud Type', 'Sky Condition'])
+    test_df = df.iloc[int(len(df)*0.75):]
+    test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Cloud Type', 'Sky Condition'])
+    test_labels = test_df['Sky Condition'].to_numpy()
+
+    sklearn_nb = GaussianNB()
+    sklearn_nb.fit(train_features, train_labels)
+    sklearn_predictions = sklearn_nb.predict(test_features)
+
+    classes = np.unique(train_labels)
+    print("\n\nCity: ", city)
+    print(balanced_accuracy_score(test_labels, sklearn_predictions))
+    print(confusion_matrix(test_labels, sklearn_predictions, labels=classes))
+    
+    # print(f"Columns in {city} dataset: {df.columns.tolist()}")
+    # # Naive Bayes
+    # nb_model = NaiveBayes(K=len(classes), D=train_features.shape[1])
+    # nb_model.fit(train_features, train_labels)
+    # nb_predictions = nb_model.predict_labels(test_features)
+
+
+    # KNN
+
 
 
 # ------------- Problem 2: Supervised Regression ---------------

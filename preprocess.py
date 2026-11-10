@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 import glob
+from sklearn.preprocessing import OneHotEncoder
 
 def load_raw_data(data_folder:str) -> dict:
     """Finds all .xlsx files in the data folder and loads required sheets from the first one as a dictionary of DataFrames.
@@ -86,6 +87,12 @@ def _preprocess_data(data_folder:str):
         df["Hour_sin"] = np.sin(hour_angle)
         df["Hour_cos"] = np.cos(hour_angle)
 
-        df = df.drop(columns=["Month", "Day", "Hour", "Minute", "Day_n", "Clear-Sky Index"])
+        # Encode "Cloud Type" as a categorical feature using one-hot encoding
+        cloud_cats = pd.Categorical(df["Cloud Type"], categories=range(13))
+        cloud_dummies = pd.get_dummies(cloud_cats, prefix="Cloud", dtype=int)
+        cloud_dummies.index = df.index  # Match df indexes
+        df = pd.concat([df, cloud_dummies], axis=1)
+
+        df = df.drop(columns=["Month", "Day", "Hour", "Minute", "Day_n", "Clear-Sky Index", "Cloud Type"])
         df.to_csv(os.path.join(data_folder, f"{city}_preprocessed.csv"), index=False)
         print(f"Preprocessed data for {city} and saved to {city}_preprocessed.csv")

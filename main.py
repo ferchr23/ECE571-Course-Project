@@ -60,7 +60,8 @@ preprocessed_data = load_preprocessed_data(data_folder)
 # ------------- Problem 2: Supervised Regression ---------------
 
 # problem2_same_city(preprocessed_data, seed=SEEDS[0])
-problem2_cross_city(preprocessed_data, seed=SEEDS[0])
+# problem2_cross_city(preprocessed_data, seed=SEEDS[0])
+problem2_sequence_variant(preprocessed_data, seed=SEEDS[0])
 
 # -------------- Problem 3: Dimension Reduction ----------------
 # Reduce feature vector to d = 2, 5, and 10 components, then use as inputs to Problem 1 and Problem 2 models

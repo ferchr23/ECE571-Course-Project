@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
-from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr
+from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr, train_and_predict_sequence_reg, RecurrentRegressionModel, TransformerRegressorModel
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, root_mean_squared_error, mean_absolute_error
+from numpy.lib.stride_tricks import sliding_window_view
 
 # ----------- Problem 1: Supervised Classification -------------
 # Sky-condition class: Multi-class (3) - classify from Clear-Sky Index k = GHI / Clearsky GHI
@@ -159,12 +160,6 @@ def problem2_same_city(preprocessed_data:dict, seed:int):
         print(f"MAE:\t{mean_absolute_error(test_labels, mlpr_predictions)}")
         
 
-
-
-
-
-
-
 def problem2_cross_city(preprocessed_data:dict, seed:int):
     """Train on complete Davis (6yr) dataset, test on Huron, Santa Barbara, and La Jolla."""
     sixyr_datasets = ['davis6','huron6','sntbarb6','lajolla6']
@@ -218,4 +213,58 @@ def problem2_cross_city(preprocessed_data:dict, seed:int):
 def problem2_sequence_variant(preprocessed_data:dict, seed:int):
     # Use Vanilla RNN and compare to LSTM and GRU variants, use transformer for deep learning
     # "build sliding windows of the last K=12 steps to predict the next step(s)"
+    for city in preprocessed_data.keys():
+        df = preprocessed_data[city]
+        train_df = df.iloc[:int(len(df)*0.80)]
+        train_labels = train_df['Output Power'].to_numpy()
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year'])
+
+        test_df = df.iloc[int(len(df)*0.80):]
+        test_labels = test_df['Output Power'].to_numpy()
+        test_features = test_df.drop(columns=['Year'])
+
+        # Find mean of observed test values for Normalized RMSE
+        mean_test_label = np.mean(test_labels)
+
+        K = 12
+
+        # Numeric arrays, scaled with TRAIN-only statistics
+        tr = train_features.to_numpy(dtype=np.float32)
+        te = test_features.to_numpy(dtype=np.float32)
+        mu, sd = tr.mean(axis=0), tr.std(axis=0)
+        sd[sd == 0] = 1.0                      # e.g. a Cloud_ column that never occurs in train
+        tr, te = (tr - mu) / sd, (te - mu) / sd
+
+        # Scale the target too (train stats only); invert after predicting
+        y_mu, y_sd = train_labels.mean(), train_labels.std()
+        y_tr = (train_labels - y_mu) / y_sd
+
+        # Train windows: rows i..i+K-1 -> target at row i+K
+        X_train = np.ascontiguousarray(sliding_window_view(tr, K, axis=0).transpose(0, 2, 1)[:-1])
+        y_train = y_tr[K:]
+
+        # Test windows: prepend the last K train rows as context, so every test row gets a prediction
+        te_ctx = np.concatenate([tr[-K:], te])
+        X_test = np.ascontiguousarray(sliding_window_view(te_ctx, K, axis=0).transpose(0, 2, 1)[:-1])
+        # X_test has len(test_df) windows; window j predicts test row j, so test_labels needs no slicing
+
+        F = tr.shape[1]
+        models = {
+            "RNN":          RecurrentRegressionModel(F, rnn_type="rnn"),
+            "LSTM":         RecurrentRegressionModel(F, rnn_type="lstm"),
+            "GRU":          RecurrentRegressionModel(F, rnn_type="gru"),
+            "Transformer":  TransformerRegressorModel(F, seq_len=K),
+        }
+
+        print(f"\n\n{city}")
+        for name, model in models.items():
+            scaled_pred = train_and_predict_sequence_reg(model, X_train, y_train, X_test, seed=seed)
+            prediction = scaled_pred * y_sd + y_mu          # back to real Output Power units
+            rmse = root_mean_squared_error(test_labels, prediction)
+            print(f"\n{name}")
+            print(f"RMSE:\t{rmse}")
+            print(f"NRMSE:\t{rmse / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(test_labels, prediction)}")
+
     print()

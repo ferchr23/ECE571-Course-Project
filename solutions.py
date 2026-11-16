@@ -1,6 +1,7 @@
 import numpy as np
-from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc
-from sklearn.metrics import balanced_accuracy_score, confusion_matrix
+import pandas as pd
+from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr
+from sklearn.metrics import balanced_accuracy_score, confusion_matrix, root_mean_squared_error, mean_absolute_error
 
 # ----------- Problem 1: Supervised Classification -------------
 # Sky-condition class: Multi-class (3) - classify from Clear-Sky Index k = GHI / Clearsky GHI
@@ -19,13 +20,19 @@ def problem1_1(preprocessed_data:dict, seed:int):
     for city in preprocessed_data.keys():
         # load preprocessed data for city, split into train/test sets, removing unapplicable features
         df = preprocessed_data[city]
+
+        # Create Clear-Sky Index labels
+        df["Clear-Sky Index"] = df["GHI"] / df["Clearsky GHI"]
+        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"])
+
         train_df = df.iloc[:int(len(df)*0.75)]
         train_labels = train_df['Sky Condition'].to_numpy()
         # Drop year - should not be used as a training feature for future predictions, drop all features that define the label
-        train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition'])
+        train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
         test_df = df.iloc[int(len(df)*0.75):]
-        test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition'])
+        test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
         test_labels = test_df['Sky Condition'].to_numpy()
+        df = df.drop(columns=["Clear-Sky Index","Sky Condition"])
 
         # Drop cloud encoding features for Naive Bayes, as creating guassian distributions for categorical features is not appropriate. Keep for other models 
         # Naive Bayes
@@ -69,14 +76,14 @@ def problem1_2(preprocessed_data:dict, seed:int):
         # Use the boundaries to label each sample as 0 (low), 1 (medium), or 2 (high)
         train_labels = np.digitize(train_power, power_tercile_boundaries)
 
-        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, drop Sky Condition labels, encoding existing features
-        train_features = train_df.drop(columns=['Year','Output Power', 'Sky Condition'])
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year','Output Power'])
 
         # Use the same boundaries to generate test labels
         test_df = df.iloc[int(len(df)*0.75):]
         test_power = test_df['Output Power'].to_numpy()
         test_labels = np.digitize(test_power, power_tercile_boundaries)
-        test_features = test_df.drop(columns=['Year', 'Output Power', 'Sky Condition'])
+        test_features = test_df.drop(columns=['Year', 'Output Power'])
 
         # Drop cloud encoding features for Naive Bayes, as creating guassian distributions for categorical features is not appropriate. Keep for other models 
         # Naive Bayes
@@ -104,3 +111,111 @@ def problem1_2(preprocessed_data:dict, seed:int):
 
         print(balanced_accuracy_score(test_labels, mlpc_predictions))
         print(confusion_matrix(test_labels, mlpc_predictions, labels=classes))
+
+# ------------- Problem 2: Supervised Regression ---------------
+# Predict Output Power from all 21 input features
+# 3 different setups: 
+#   1. Same-city: chronological 80/20 split in one city
+#   2. Cross-city (zero-shot): train on one city, test on another with no finetuning. Normalize per city
+#   3. Sequence variant: feed the last K=12 steps, predict the next Output Power (short-term forecast)
+
+# Root-mean-square-error (RMSE) or Mean-absolute-error (MAE) for each method and setup
+# Give every regression number as mean +/- std over >= 3 random seeds. Always report RMSE with nRMSE for cross-city result comparisons
+# Learning-curve, or prediction-vs-truth plot
+
+# Vector shaped data, don't use CNN or recurrent. Use Multilayer Perceptron (MLP) for deep learning solution. Use linear regression as a baseline
+
+# Sequence variant: Use Vanilla RNN and compare to LSTM and GRU variants, use transformer for deep learning.
+
+def problem2_same_city(preprocessed_data:dict, seed:int):
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city]
+        train_df = df.iloc[:int(len(df)*0.80)]
+        train_labels = train_df['Output Power'].to_numpy()
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year','Output Power'])
+
+        test_df = df.iloc[int(len(df)*0.80):]
+        test_labels = test_df['Output Power'].to_numpy()
+        test_features = test_df.drop(columns=['Year', 'Output Power'])
+
+        # Find mean of observed test values for Normalized RMSE
+        mean_test_label = np.mean(test_labels)
+
+        # Linear Regression
+        linreg_predictions = train_and_predict_linreg(train_features, train_labels, test_features)
+        print("\n\nCity: ", city)
+        print("\nLinear Regression")
+        print(f"RMSE:\t{root_mean_squared_error(test_labels, linreg_predictions)}")
+        print(f"NRMSE:\t{root_mean_squared_error(test_labels, linreg_predictions) / mean_test_label}")
+        print(f"MAE:\t{mean_absolute_error(test_labels, linreg_predictions)}")
+
+        # MLP Regressor
+        mlpr_predictions = train_and_predict_mlpr(train_features, train_labels, test_features, seed=seed)
+        print("\nMLP Regressor")
+        print(f"RMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions)}")
+        print(f"NRMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions) / mean_test_label}")
+        print(f"MAE:\t{mean_absolute_error(test_labels, mlpr_predictions)}")
+        
+
+
+
+
+
+
+
+def problem2_cross_city(preprocessed_data:dict, seed:int):
+    """Train on complete Davis (6yr) dataset, test on Huron, Santa Barbara, and La Jolla."""
+    sixyr_datasets = ['davis6','huron6','sntbarb6','lajolla6']
+    for train_city in sixyr_datasets:
+        train_df = preprocessed_data[train_city]
+
+        train_labels = train_df['Output Power'].to_numpy()
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year','Output Power'])
+
+        zscore_train_labels = (train_labels - np.mean(train_labels)) / np.std(train_labels)
+
+        test_cities = sixyr_datasets.copy()
+        test_cities.remove(train_city)
+        for city in test_cities:
+            test_df = preprocessed_data[city]
+            test_labels = test_df['Output Power'].to_numpy()
+            # Normalize Output per city, as each city has a different "max" Output Power scale, using Z-score normalization
+            zscore_test_labels = (test_labels - np.mean(test_labels)) / np.std(test_labels)
+            test_features = test_df.drop(columns=['Year', 'Output Power'])
+            # Find mean of observed test values for Normalized RMSE
+            mean_test_label = np.mean(test_labels)
+
+            # Linear Regression
+            linreg_predictions = train_and_predict_linreg(train_features, train_labels, test_features)
+            norm_linreg_prediction = train_and_predict_linreg(train_features, zscore_train_labels, test_features) * np.std(test_labels) + np.mean(test_labels)
+            print(f"\n\n{train_city} to {city}")
+            print("\nLinear Regression")
+            print(f"RMSE:\t{root_mean_squared_error(test_labels, linreg_predictions)}")
+            print(f"NRMSE:\t{root_mean_squared_error(test_labels, linreg_predictions) / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(test_labels, linreg_predictions)}")
+
+            print("\nNormalized Linear Regression")
+            print(f"RMSE:\t{root_mean_squared_error(test_labels, norm_linreg_prediction)}")
+            print(f"NRMSE:\t{root_mean_squared_error(test_labels, norm_linreg_prediction) / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(test_labels, norm_linreg_prediction)}")
+
+            # MLP Regressor
+            mlpr_predictions = train_and_predict_mlpr(train_features, train_labels, test_features, seed=seed)
+            norm_mlpr_predictions = train_and_predict_mlpr(train_features, zscore_train_labels, test_features, seed=seed) * np.std(test_labels) + np.mean(test_labels)
+            print("\nMLP Regressor")
+            print(f"RMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions)}")
+            print(f"NRMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions) / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(test_labels, mlpr_predictions)}")
+
+            print("\nNormalized MLP Regessor")
+            print(f"RMSE:\t{root_mean_squared_error(test_labels, norm_mlpr_predictions)}")
+            print(f"NRMSE:\t{root_mean_squared_error(test_labels, norm_mlpr_predictions) / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(test_labels, norm_mlpr_predictions)}")
+
+def problem2_sequence_variant(preprocessed_data:dict, seed:int):
+    # Use Vanilla RNN and compare to LSTM and GRU variants, use transformer for deep learning
+    # "build sliding windows of the last K=12 steps to predict the next step(s)"
+    print()

@@ -1,7 +1,8 @@
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.neural_network import MLPClassifier
+from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.linear_model import LinearRegression
 
 def train_and_predict_nb(train_features, train_labels, test_features):
     sklearn_nb = GaussianNB()
@@ -26,3 +27,15 @@ def train_and_predict_mlpc(train_features, train_labels, test_features, seed):
     sklearn_mlpc.fit(train_features, train_labels)
     sklearn_mlpc_predictions = sklearn_mlpc.predict(test_features)
     return sklearn_mlpc_predictions
+
+def train_and_predict_linreg(train_features, train_labels, test_features):
+    sklearn_linreg = LinearRegression()
+    sklearn_linreg.fit(train_features, train_labels)
+    sklearn_linreg_predictions = sklearn_linreg.predict(test_features)
+    return sklearn_linreg_predictions
+
+def train_and_predict_mlpr(train_features, train_labels, test_features, seed):
+    sklearn_mlpr = MLPRegressor(hidden_layer_sizes=(100,), activation='tanh', max_iter=500, random_state=seed)
+    sklearn_mlpr.fit(train_features, train_labels)
+    sklearn_mlpr_predictions = sklearn_mlpr.predict(test_features)
+    return sklearn_mlpr_predictions

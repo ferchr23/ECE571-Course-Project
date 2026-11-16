@@ -6,7 +6,7 @@ import glob
 
 
 from preprocess import load_preprocessed_data
-from solutions import problem1_1, problem1_2
+from solutions import problem1_1, problem1_2, problem2_cross_city, problem2_same_city, problem2_sequence_variant
 
 SEEDS = [42, 789, 256]
 
@@ -52,25 +52,15 @@ preprocessed_data = load_preprocessed_data(data_folder)
 
 # ----------- Problem 1: Supervised Classification -------------
 
-problem1_1(preprocessed_data, seed=SEEDS[0])
-problem1_2(preprocessed_data, seed=SEEDS[0])
+# problem1_1(preprocessed_data, seed=SEEDS[0])
+# problem1_2(preprocessed_data, seed=SEEDS[0])
 
 
 
 # ------------- Problem 2: Supervised Regression ---------------
-# Predict Output Power from all 21 input features
-# 3 different setups: 
-#   1. Same-city: chronological 80/20 split in one city
-#   2. Cross-city (zero-shot): train on one city, test on another with no finetuning. Normalize per city
-#   3. Sequence variant: feed the last K=12 steps, predict the next Output Power (short-term forecast)
 
-# Root-mean-square-error (RMSE) or Mean-absolute-error (MAE) for each method and setup
-# Give every regression number as mean +/- std over >= 3 random seeds. Always report RMSE with nRMSE for cross-city result comparisons
-# Learning-curve, or prediction-vs-truth plot
-
-# Vector shaped data, don't use CNN or recurrent. Use Multilayer Perceptron (MLP) for deep learning solution. Use linear regression as a baseline
-
-# Sequence variant: Use Vanilla RNN and compare to LSTM and GRU variants
+# problem2_same_city(preprocessed_data, seed=SEEDS[0])
+problem2_cross_city(preprocessed_data, seed=SEEDS[0])
 
 # -------------- Problem 3: Dimension Reduction ----------------
 # Reduce feature vector to d = 2, 5, and 10 components, then use as inputs to Problem 1 and Problem 2 models

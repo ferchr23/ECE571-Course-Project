@@ -67,9 +67,6 @@ def _preprocess_data(data_folder:str):
 
     for city in data.keys():
         df = data[city]
-        # Create Clear-Sky Index labels
-        df["Clear-Sky Index"] = df["GHI"] / df["Clearsky GHI"]
-        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"])
 
         # Days elapsed before the start of each month (non-leap year), indexed by month 1-12
         month_offsets = np.array([0, 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334])
@@ -93,6 +90,6 @@ def _preprocess_data(data_folder:str):
         cloud_dummies.index = df.index  # Match df indexes
         df = pd.concat([df, cloud_dummies], axis=1)
 
-        df = df.drop(columns=["Month", "Day", "Hour", "Minute", "Day_n", "Clear-Sky Index", "Cloud Type"])
+        df = df.drop(columns=["Month", "Day", "Hour", "Minute", "Day_n", "Cloud Type"])
         df.to_csv(os.path.join(data_folder, f"{city}_preprocessed.csv"), index=False)
         print(f"Preprocessed data for {city} and saved to {city}_preprocessed.csv")

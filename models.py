@@ -37,7 +37,7 @@ def train_and_predict_rf(train_features, train_labels, test_features, seed):
     return sklearn_rf_predictions
 
 def train_and_predict_mlpc(train_features, train_labels, test_features, seed):
-    sklearn_mlpc = MLPClassifier(hidden_layer_sizes=(100,), activation='tanh', max_iter=500, random_state=seed)
+    sklearn_mlpc = MLPClassifier(hidden_layer_sizes=(100,), activation='tanh', max_iter=1000, random_state=seed)
     sklearn_mlpc.fit(train_features, train_labels)
     sklearn_mlpc_predictions = sklearn_mlpc.predict(test_features)
     return sklearn_mlpc_predictions
@@ -49,10 +49,24 @@ def train_and_predict_linreg(train_features, train_labels, test_features):
     return sklearn_linreg_predictions
 
 def train_and_predict_mlpr(train_features, train_labels, test_features, seed):
-    sklearn_mlpr = MLPRegressor(hidden_layer_sizes=(100,), activation='tanh', max_iter=500, random_state=seed)
+    sklearn_mlpr = MLPRegressor(hidden_layer_sizes=(100,), activation='tanh', max_iter=1000, random_state=seed)
     sklearn_mlpr.fit(train_features, train_labels)
     sklearn_mlpr_predictions = sklearn_mlpr.predict(test_features)
     return sklearn_mlpr_predictions
+
+def train_linreg(x_tr, y_tr):
+    sklearn_linreg = LinearRegression()
+    sklearn_linreg.fit(x_tr, y_tr)
+    return sklearn_linreg
+
+def train_mlpr(x_tr, y_tr, seed):
+    sklearn_mlpr = MLPRegressor(hidden_layer_sizes=(100,), activation='tanh', max_iter=1000, random_state=seed)
+    sklearn_mlpr.fit(x_tr, y_tr)
+    return sklearn_mlpr
+
+def predict_model(model, x_te):
+    return model.predict(x_te)
+    
 
 class RecurrentRegressionModel(nn.Module):
     def __init__(self, num_feats, rnn_type, hidden=64, layers=2, dropout=0.2):

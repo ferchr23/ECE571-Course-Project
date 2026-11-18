@@ -60,21 +60,11 @@ preprocessed_data = load_preprocessed_data(data_folder)
 # ------------- Problem 2: Supervised Regression ---------------
 
 # problem2_same_city(preprocessed_data, seed=SEEDS[0])
-# problem2_cross_city(preprocessed_data, seed=SEEDS[0])
-problem2_sequence_variant(preprocessed_data, seed=SEEDS[0])
+problem2_cross_city(preprocessed_data, seed=SEEDS[0])
+# problem2_sequence_variant(preprocessed_data, seed=SEEDS[0])
 
 # -------------- Problem 3: Dimension Reduction ----------------
-# Reduce feature vector to d = 2, 5, and 10 components, then use as inputs to Problem 1 and Problem 2 models
-# Choose d based on explained-variance curve / reconstruction error curve
-# Compare results with and without dimension reduction
 
-# Show reconstruction error for variational autoencoder (VAE) / autoencoder (AE), as well as explained-variance for PCA/KPCA
-#   Reconstruction MSE - mean squared error between original features (x) and reconstruction (x-hat), lower preserves more info
-#       Plot reconstruction MSE against the number of components, picking a number d at the elbow of the curve
-#   Explained-variance ratio - fraction of variance captured by first d components (1 is lossless), show the cumulative curve
-# Report classification balanced accuracy, and regression RMSE / MAE, comparing to the results without dimension reduction
-# Visualize with 2-d t-SNE or UMAP scatter colored by class labels or Output-Power bins
-#   Do nearest neighbors in the embedding space to visualize class separability and structure. Also just inspect scatter for separated structure
 
 # ----------- Problem 4: Semi-supervised Learning --------------
 # Pick base task (either problem 1 or 2)

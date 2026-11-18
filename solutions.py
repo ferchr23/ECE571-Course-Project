@@ -1,8 +1,21 @@
 import numpy as np
 import pandas as pd
-from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr, train_and_predict_sequence_reg, RecurrentRegressionModel, TransformerRegressorModel
+from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr, train_linreg, train_mlpr, predict_model, train_and_predict_sequence_reg, RecurrentRegressionModel, TransformerRegressorModel
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, root_mean_squared_error, mean_absolute_error
 from numpy.lib.stride_tricks import sliding_window_view
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler
+
+def _fit_and_scale(x_tr):
+    # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+    no_scaler = [c for c in x_tr.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+
+    to_scale = [c for c in x_tr.columns if c not in no_scaler]
+    # Reorder columns, so those scaled are first, set to return pandas df
+    scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+    scaler.set_output(transform="pandas")
+    X_tr = scaler.fit_transform(x_tr)
+    return X_tr, scaler
 
 # ----------- Problem 1: Supervised Classification -------------
 # Sky-condition class: Multi-class (3) - classify from Clear-Sky Index k = GHI / Clearsky GHI
@@ -20,48 +33,49 @@ def problem1_1(preprocessed_data:dict, seed:int):
     # Same-city classification: chronological 75/25 split in each city
     for city in preprocessed_data.keys():
         # load preprocessed data for city, split into train/test sets, removing unapplicable features
-        df = preprocessed_data[city]
+        df = preprocessed_data[city].copy()
 
         # Create Clear-Sky Index labels
         df["Clear-Sky Index"] = df["GHI"] / df["Clearsky GHI"]
-        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"])
+        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"], right=False)
 
         train_df = df.iloc[:int(len(df)*0.75)]
-        train_labels = train_df['Sky Condition'].to_numpy()
+        Y_tr = train_df['Sky Condition'].to_numpy()
         # Drop year - should not be used as a training feature for future predictions, drop all features that define the label
         train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
         test_df = df.iloc[int(len(df)*0.75):]
         test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
-        test_labels = test_df['Sky Condition'].to_numpy()
-        df = df.drop(columns=["Clear-Sky Index","Sky Condition"])
+        Y_te = test_df['Sky Condition'].to_numpy()
+
+        X_tr, scaler = _fit_and_scale(train_features)
+        X_te = scaler.transform(test_features)
 
         # Drop cloud encoding features for Naive Bayes, as creating guassian distributions for categorical features is not appropriate. Keep for other models 
         # Naive Bayes
-        nb_predictions = train_and_predict_nb(train_features.filter(cond=~(train_features.columns.str.startswith("Cloud_")), axis=1), train_labels, test_features.filter(cond=~(test_features.columns.str.startswith("Cloud_")), axis=1))
+        nb_predictions = train_and_predict_nb(X_tr.filter(cond=~(X_tr.columns.str.startswith("Cloud_")), axis=1), Y_tr, X_te.filter(cond=~(X_te.columns.str.startswith("Cloud_")), axis=1))
 
-        classes = np.unique(train_labels)
+        classes = np.unique(Y_tr)
         print("\n\nCity: ", city)
-        print(balanced_accuracy_score(test_labels, nb_predictions))
-        print(confusion_matrix(test_labels, nb_predictions, labels=classes))
-
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
 
         # KNN
-        knn_predictions = train_and_predict_knn(train_features, train_labels, test_features)
+        knn_predictions = train_and_predict_knn(X_tr, Y_tr, X_te)
 
-        print(balanced_accuracy_score(test_labels, knn_predictions))
-        print(confusion_matrix(test_labels, knn_predictions, labels=classes))
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
 
         # Random Forest
-        rf_predictions = train_and_predict_rf(train_features, train_labels, test_features, seed=seed)
+        rf_predictions = train_and_predict_rf(X_tr, Y_tr, X_te, seed=seed)
 
-        print(balanced_accuracy_score(test_labels, rf_predictions))
-        print(confusion_matrix(test_labels, rf_predictions, labels=classes))
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
 
         # MLP Classifier
-        mlpc_predictions = train_and_predict_mlpc(train_features, train_labels, test_features, seed=seed)
+        mlpc_predictions = train_and_predict_mlpc(X_tr, Y_tr, X_te, seed=seed)
 
-        print(balanced_accuracy_score(test_labels, mlpc_predictions))
-        print(confusion_matrix(test_labels, mlpc_predictions, labels=classes))
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
 
 def problem1_2(preprocessed_data:dict, seed:int):
     # Generation regime classification - Labeling Output Power as low / medium / high
@@ -75,7 +89,7 @@ def problem1_2(preprocessed_data:dict, seed:int):
         train_power = train_df['Output Power'].to_numpy()
         power_tercile_boundaries = np.quantile(train_power, [1/3, 2/3])
         # Use the boundaries to label each sample as 0 (low), 1 (medium), or 2 (high)
-        train_labels = np.digitize(train_power, power_tercile_boundaries)
+        Y_tr = np.digitize(train_power, power_tercile_boundaries)
 
         # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
         train_features = train_df.drop(columns=['Year','Output Power'])
@@ -83,35 +97,38 @@ def problem1_2(preprocessed_data:dict, seed:int):
         # Use the same boundaries to generate test labels
         test_df = df.iloc[int(len(df)*0.75):]
         test_power = test_df['Output Power'].to_numpy()
-        test_labels = np.digitize(test_power, power_tercile_boundaries)
+        Y_te = np.digitize(test_power, power_tercile_boundaries)
         test_features = test_df.drop(columns=['Year', 'Output Power'])
+
+        X_tr, scaler = _fit_and_scale(train_features)
+        X_te = scaler.transform(test_features)
 
         # Drop cloud encoding features for Naive Bayes, as creating guassian distributions for categorical features is not appropriate. Keep for other models 
         # Naive Bayes
-        nb_predictions = train_and_predict_nb(train_features.filter(cond=~(train_features.columns.str.startswith("Cloud_")), axis=1), train_labels, test_features.filter(cond=~(test_features.columns.str.startswith("Cloud_")), axis=1))
+        nb_predictions = train_and_predict_nb(X_tr.filter(cond=~(X_tr.columns.str.startswith("Cloud_")), axis=1), Y_tr, X_te.filter(cond=~(X_te.columns.str.startswith("Cloud_")), axis=1))
 
-        classes = np.unique(train_labels)
+        classes = np.unique(Y_tr)
         print("\n\nCity: ", city)
-        print(balanced_accuracy_score(test_labels, nb_predictions))
-        print(confusion_matrix(test_labels, nb_predictions, labels=classes))
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
 
         # KNN
-        knn_predictions = train_and_predict_knn(train_features, train_labels, test_features)
+        knn_predictions = train_and_predict_knn(X_tr, Y_tr, X_te)
 
-        print(balanced_accuracy_score(test_labels, knn_predictions))
-        print(confusion_matrix(test_labels, knn_predictions, labels=classes))
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
 
         # Random Forest
-        rf_predictions = train_and_predict_rf(train_features, train_labels, test_features, seed=seed)
+        rf_predictions = train_and_predict_rf(X_tr, Y_tr, X_te, seed=seed)
 
-        print(balanced_accuracy_score(test_labels, rf_predictions))
-        print(confusion_matrix(test_labels, rf_predictions, labels=classes))
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
 
         # MLP Classifier
-        mlpc_predictions = train_and_predict_mlpc(train_features, train_labels, test_features, seed=seed)
+        mlpc_predictions = train_and_predict_mlpc(X_tr, Y_tr, X_te, seed=seed)
 
-        print(balanced_accuracy_score(test_labels, mlpc_predictions))
-        print(confusion_matrix(test_labels, mlpc_predictions, labels=classes))
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
 
 # ------------- Problem 2: Supervised Regression ---------------
 # Predict Output Power from all 21 input features
@@ -138,26 +155,34 @@ def problem2_same_city(preprocessed_data:dict, seed:int):
         train_features = train_df.drop(columns=['Year','Output Power'])
 
         test_df = df.iloc[int(len(df)*0.80):]
-        test_labels = test_df['Output Power'].to_numpy()
+        Y_te = test_df['Output Power'].to_numpy()
         test_features = test_df.drop(columns=['Year', 'Output Power'])
 
+        X_tr, scaler = _fit_and_scale(train_features)
+        X_te = scaler.transform(test_features)
+
+        y_scaler = StandardScaler()
+        Y_tr = y_scaler.fit_transform(train_labels.reshape(-1, 1)).ravel()
+
         # Find mean of observed test values for Normalized RMSE
-        mean_test_label = np.mean(test_labels)
+        mean_test_label = np.mean(Y_te)
 
         # Linear Regression
-        linreg_predictions = train_and_predict_linreg(train_features, train_labels, test_features)
+        scaled_linreg_predictions = train_and_predict_linreg(X_tr, Y_tr, X_te)
+        linreg_predictions = y_scaler.inverse_transform(scaled_linreg_predictions.reshape(-1, 1)).ravel()
         print("\n\nCity: ", city)
         print("\nLinear Regression")
-        print(f"RMSE:\t{root_mean_squared_error(test_labels, linreg_predictions)}")
-        print(f"NRMSE:\t{root_mean_squared_error(test_labels, linreg_predictions) / mean_test_label}")
-        print(f"MAE:\t{mean_absolute_error(test_labels, linreg_predictions)}")
+        print(f"RMSE:\t{root_mean_squared_error(Y_te, linreg_predictions)}")
+        print(f"NRMSE:\t{root_mean_squared_error(Y_te, linreg_predictions) / mean_test_label}")
+        print(f"MAE:\t{mean_absolute_error(Y_te, linreg_predictions)}")
 
         # MLP Regressor
-        mlpr_predictions = train_and_predict_mlpr(train_features, train_labels, test_features, seed=seed)
+        scaled_mlpr_predictions = train_and_predict_mlpr(X_tr, Y_tr, X_te, seed=seed)
+        mlpr_predictions = y_scaler.inverse_transform(scaled_mlpr_predictions.reshape(-1, 1)).ravel()
         print("\nMLP Regressor")
-        print(f"RMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions)}")
-        print(f"NRMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions) / mean_test_label}")
-        print(f"MAE:\t{mean_absolute_error(test_labels, mlpr_predictions)}")
+        print(f"RMSE:\t{root_mean_squared_error(Y_te, mlpr_predictions)}")
+        print(f"NRMSE:\t{root_mean_squared_error(Y_te, mlpr_predictions) / mean_test_label}")
+        print(f"MAE:\t{mean_absolute_error(Y_te, mlpr_predictions)}")
         
 
 def problem2_cross_city(preprocessed_data:dict, seed:int):
@@ -170,45 +195,50 @@ def problem2_cross_city(preprocessed_data:dict, seed:int):
         # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
         train_features = train_df.drop(columns=['Year','Output Power'])
 
-        zscore_train_labels = (train_labels - np.mean(train_labels)) / np.std(train_labels)
+        X_tr, scaler = _fit_and_scale(train_features)
+        
+        # Normalize labels by maximum Output Power. This is an "oracle-scale" change. Otherwise residuals are dominated by scale differences between cities, likely a result of the size of their solar grid installation. I should report the effect of this change, saving output both with and without the normalization.
+        train_labels = train_labels / np.max(train_labels)
+        
+        y_scaler = StandardScaler()
+        Y_tr = y_scaler.fit_transform(train_labels.reshape(-1, 1)).ravel()
+
+        # Different setup here compared to other problems. Model is trained once on a single city and then tested three times. Split this up for efficiency
+        linreg_model = train_linreg(X_tr, Y_tr)
+        mlpr_model = train_mlpr(X_tr, Y_tr, seed=seed)
 
         test_cities = sixyr_datasets.copy()
         test_cities.remove(train_city)
         for city in test_cities:
             test_df = preprocessed_data[city]
-            test_labels = test_df['Output Power'].to_numpy()
-            # Normalize Output per city, as each city has a different "max" Output Power scale, using Z-score normalization
-            zscore_test_labels = (test_labels - np.mean(test_labels)) / np.std(test_labels)
+            Y_te = test_df['Output Power'].to_numpy()
             test_features = test_df.drop(columns=['Year', 'Output Power'])
             # Find mean of observed test values for Normalized RMSE
-            mean_test_label = np.mean(test_labels)
+            mean_test_label = np.mean(Y_te)
+
+            X_te = scaler.transform(test_features)
 
             # Linear Regression
-            linreg_predictions = train_and_predict_linreg(train_features, train_labels, test_features)
-            norm_linreg_prediction = train_and_predict_linreg(train_features, zscore_train_labels, test_features) * np.std(test_labels) + np.mean(test_labels)
+            scaled_linreg_predictions = predict_model(linreg_model, X_te)
+            linreg_predictions = y_scaler.inverse_transform(scaled_linreg_predictions.reshape(-1, 1)).ravel()
+
+            # Undo normalization using test city max power - this is the part that requires Oracle knowledge
+            linreg_predictions = linreg_predictions * np.max(Y_te)
             print(f"\n\n{train_city} to {city}")
             print("\nLinear Regression")
-            print(f"RMSE:\t{root_mean_squared_error(test_labels, linreg_predictions)}")
-            print(f"NRMSE:\t{root_mean_squared_error(test_labels, linreg_predictions) / mean_test_label}")
-            print(f"MAE:\t{mean_absolute_error(test_labels, linreg_predictions)}")
-
-            print("\nNormalized Linear Regression")
-            print(f"RMSE:\t{root_mean_squared_error(test_labels, norm_linreg_prediction)}")
-            print(f"NRMSE:\t{root_mean_squared_error(test_labels, norm_linreg_prediction) / mean_test_label}")
-            print(f"MAE:\t{mean_absolute_error(test_labels, norm_linreg_prediction)}")
+            print(f"RMSE:\t{root_mean_squared_error(Y_te, linreg_predictions)}")
+            print(f"NRMSE:\t{root_mean_squared_error(Y_te, linreg_predictions) / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(Y_te, linreg_predictions)}")
 
             # MLP Regressor
-            mlpr_predictions = train_and_predict_mlpr(train_features, train_labels, test_features, seed=seed)
-            norm_mlpr_predictions = train_and_predict_mlpr(train_features, zscore_train_labels, test_features, seed=seed) * np.std(test_labels) + np.mean(test_labels)
+            scaled_mlpr_predictions = predict_model(mlpr_model, X_te)
+            mlpr_predictions = y_scaler.inverse_transform(scaled_mlpr_predictions.reshape(-1, 1)).ravel()
+            # Undo normalization using test city max power - this is the part that requires Oracle knowledge
+            mlpr_predictions = mlpr_predictions * np.max(Y_te)
             print("\nMLP Regressor")
-            print(f"RMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions)}")
-            print(f"NRMSE:\t{root_mean_squared_error(test_labels, mlpr_predictions) / mean_test_label}")
-            print(f"MAE:\t{mean_absolute_error(test_labels, mlpr_predictions)}")
-
-            print("\nNormalized MLP Regessor")
-            print(f"RMSE:\t{root_mean_squared_error(test_labels, norm_mlpr_predictions)}")
-            print(f"NRMSE:\t{root_mean_squared_error(test_labels, norm_mlpr_predictions) / mean_test_label}")
-            print(f"MAE:\t{mean_absolute_error(test_labels, norm_mlpr_predictions)}")
+            print(f"RMSE:\t{root_mean_squared_error(Y_te, mlpr_predictions)}")
+            print(f"NRMSE:\t{root_mean_squared_error(Y_te, mlpr_predictions) / mean_test_label}")
+            print(f"MAE:\t{mean_absolute_error(Y_te, mlpr_predictions)}")
 
 def problem2_sequence_variant(preprocessed_data:dict, seed:int):
     # Use Vanilla RNN and compare to LSTM and GRU variants, use transformer for deep learning
@@ -221,35 +251,31 @@ def problem2_sequence_variant(preprocessed_data:dict, seed:int):
         train_features = train_df.drop(columns=['Year'])
 
         test_df = df.iloc[int(len(df)*0.80):]
-        test_labels = test_df['Output Power'].to_numpy()
+        Y_te = test_df['Output Power'].to_numpy()
         test_features = test_df.drop(columns=['Year'])
 
         # Find mean of observed test values for Normalized RMSE
-        mean_test_label = np.mean(test_labels)
+        mean_test_label = np.mean(Y_te)
 
+        X_tr, scaler = _fit_and_scale(train_features)
+        X_tr = X_tr.to_numpy(dtype=np.float32)
+        X_te = scaler.transform(test_features)
+        y_scaler = StandardScaler()
+        Y_tr = y_scaler.fit_transform(train_labels.reshape(-1, 1)).ravel()
+
+        # Size of windows
         K = 12
-
-        # Numeric arrays, scaled with TRAIN-only statistics
-        tr = train_features.to_numpy(dtype=np.float32)
-        te = test_features.to_numpy(dtype=np.float32)
-        mu, sd = tr.mean(axis=0), tr.std(axis=0)
-        sd[sd == 0] = 1.0                      # e.g. a Cloud_ column that never occurs in train
-        tr, te = (tr - mu) / sd, (te - mu) / sd
-
-        # Scale the target too (train stats only); invert after predicting
-        y_mu, y_sd = train_labels.mean(), train_labels.std()
-        y_tr = (train_labels - y_mu) / y_sd
-
+                
         # Train windows: rows i..i+K-1 -> target at row i+K
-        X_train = np.ascontiguousarray(sliding_window_view(tr, K, axis=0).transpose(0, 2, 1)[:-1])
-        y_train = y_tr[K:]
+        X_train = np.ascontiguousarray(sliding_window_view(X_tr, K, axis=0).transpose(0, 2, 1)[:-1])
+        y_train = Y_tr[K:]
 
         # Test windows: prepend the last K train rows as context, so every test row gets a prediction
-        te_ctx = np.concatenate([tr[-K:], te])
+        te_ctx = np.concatenate([X_tr[-K:], X_te])
         X_test = np.ascontiguousarray(sliding_window_view(te_ctx, K, axis=0).transpose(0, 2, 1)[:-1])
         # X_test has len(test_df) windows; window j predicts test row j, so test_labels needs no slicing
 
-        F = tr.shape[1]
+        F = X_tr.shape[1]
         models = {
             "RNN":          RecurrentRegressionModel(F, rnn_type="rnn"),
             "LSTM":         RecurrentRegressionModel(F, rnn_type="lstm"),
@@ -260,11 +286,30 @@ def problem2_sequence_variant(preprocessed_data:dict, seed:int):
         print(f"\n\n{city}")
         for name, model in models.items():
             scaled_pred = train_and_predict_sequence_reg(model, X_train, y_train, X_test, seed=seed)
-            prediction = scaled_pred * y_sd + y_mu          # back to real Output Power units
-            rmse = root_mean_squared_error(test_labels, prediction)
+            prediction = y_scaler.inverse_transform(scaled_pred.reshape(-1, 1)).ravel()          # back to real Output Power units
+            rmse = root_mean_squared_error(Y_te, prediction)
             print(f"\n{name}")
             print(f"RMSE:\t{rmse}")
             print(f"NRMSE:\t{rmse / mean_test_label}")
-            print(f"MAE:\t{mean_absolute_error(test_labels, prediction)}")
+            print(f"MAE:\t{mean_absolute_error(Y_te, prediction)}")
 
+# -------------- Problem 3: Dimension Reduction ----------------
+# Reduce feature vector to d = 2, 5, and 10 components, then use as inputs to Problem 1 and Problem 2 models
+# Choose d based on explained-variance curve / reconstruction error curve
+# Compare results with and without dimension reduction
+
+# Show reconstruction error for variational autoencoder (VAE) / autoencoder (AE), as well as explained-variance for PCA/KPCA
+#   Reconstruction MSE - mean squared error between original features (x) and reconstruction (x-hat), lower preserves more info
+#       Plot reconstruction MSE against the number of components, picking a number d at the elbow of the curve
+#   Explained-variance ratio - fraction of variance captured by first d components (1 is lossless), show the cumulative curve
+# Report classification balanced accuracy, and regression RMSE / MAE, comparing to the results without dimension reduction
+# Visualize with 2-d t-SNE or UMAP scatter colored by class labels or Output-Power bins
+#   Do nearest neighbors in the embedding space to visualize class separability and structure. Also just inspect scatter for separated structure
+
+# Use PCA and/or Kernel PCA to reduce the dimensionality
+
+def problem3_1(preprocessed_data:dict, seed:int):
+    print()
+
+def problem3_2(preprocessed_data:dict, seed:int):
     print()

@@ -6,7 +6,7 @@ import glob
 
 
 from preprocess import load_preprocessed_data
-from solutions import problem1_1, problem1_2, problem2_cross_city, problem2_same_city, problem2_sequence_variant
+from solutions import problem1_1, problem1_2, problem2_cross_city, problem2_same_city, problem2_sequence_variant, problem3_1_PCA, problem3_1_AutoEn
 
 SEEDS = [42, 789, 256]
 
@@ -60,11 +60,12 @@ preprocessed_data = load_preprocessed_data(data_folder)
 # ------------- Problem 2: Supervised Regression ---------------
 
 # problem2_same_city(preprocessed_data, seed=SEEDS[0])
-problem2_cross_city(preprocessed_data, seed=SEEDS[0])
+# problem2_cross_city(preprocessed_data, seed=SEEDS[0])
 # problem2_sequence_variant(preprocessed_data, seed=SEEDS[0])
 
 # -------------- Problem 3: Dimension Reduction ----------------
-
+# problem3_1_PCA(preprocessed_data, d=10, seed=SEEDS[0])
+problem3_1_AutoEn(preprocessed_data, d=10, seed=SEEDS[0])
 
 # ----------- Problem 4: Semi-supervised Learning --------------
 # Pick base task (either problem 1 or 2)

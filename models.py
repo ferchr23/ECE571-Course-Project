@@ -3,8 +3,9 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.linear_model import LinearRegression
+import numpy as np
 import torch 
-from torch import nn
+from torch import nn, optim
 from torch.utils.data import TensorDataset, DataLoader
 
 def _to_loader (features, labels, batch_size=64, shuffle=False):
@@ -122,10 +123,10 @@ def train_and_predict_sequence_reg(model, train_features, train_labels, test_fea
     model.to("cpu")
 
     # Create a chronological tail for validation on the training set
-    validation_len = int(len(train_features) * val_frac)
+    n_val = int(len(train_features) * val_frac)
     # Shuffling the batches should not affect chronological splits of training and test, also have days encoded as cos / sin, so time can be calculated
-    train_dl = _to_loader(train_features[:-validation_len],train_labels[:-validation_len],batch_size, shuffle=True)
-    val_dl = _to_loader(train_features[-validation_len:], train_labels[-validation_len:],batch_size)
+    train_dl = _to_loader(train_features[:-n_val],train_labels[:-n_val],batch_size, shuffle=True)
+    val_dl = _to_loader(train_features[-n_val:], train_labels[-n_val:],batch_size)
 
     opt = torch.optim.Adam(model.parameters(), lr=lr)
     loss_function = nn.MSELoss()
@@ -144,7 +145,7 @@ def train_and_predict_sequence_reg(model, train_features, train_labels, test_fea
         model.eval()
         # Skip gradient tracking during evaluation to save memory
         with torch.no_grad():
-            val = sum(loss_function(model(xb.to("cpu")), yb.to("cpu")).item() * len(xb) for xb, yb in val_dl) / validation_len
+            val = sum(loss_function(model(xb.to("cpu")), yb.to("cpu")).item() * len(xb) for xb, yb in val_dl) / n_val
             if val < best:
                 best, bad = val, 0
                 best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
@@ -159,3 +160,71 @@ def train_and_predict_sequence_reg(model, train_features, train_labels, test_fea
     with torch.no_grad():
         predictions = model(torch.as_tensor(test_features, dtype=torch.float32, device="cpu"))
     return predictions.cpu().numpy().ravel()
+
+class AutoEncoder(nn.Module):
+    def __init__(self, num_feats, target_d):
+        super().__init__()
+        int_d1 = num_feats - int((num_feats - target_d)/2)
+        int_d2 = int_d1 - int((num_feats - target_d)/4)
+        self.encoder = nn.Sequential(
+            nn.Linear(num_feats, int_d1),
+            nn.ReLU(),
+            nn.Linear(int_d1, int_d2),
+            nn.ReLU(),
+            nn.Linear(int_d2, target_d)
+        )
+        self.decoder = nn.Sequential(
+            nn.Linear(target_d, int_d2),
+            nn.ReLU(),
+            nn.Linear(int_d2, int_d1),
+            nn.ReLU(),
+            nn.Linear(int_d1, num_feats)
+        )
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        decoded = self.decoder(encoded)
+        return decoded
+    
+    def encode(self, x):
+        return self.encoder(x)
+
+    def decode(self, z):
+        return self.decoder(z)
+
+def train_autoencoder(model, X_tr, seed, epochs=100, patience=10, lr=1e-3, batch_size=64, val_frac=0.15):
+    torch.manual_seed(seed)
+    X = torch.as_tensor(np.asarray(X_tr),dtype=torch.float32)
+
+    # Create a chronological tail for validation on the training set
+    n_val = int(len(X) * val_frac)
+    train_dl = DataLoader(TensorDataset(X[:-n_val]),batch_size=batch_size, shuffle=True)
+    X_val = X[-n_val:]
+
+    opt = torch.optim.Adam(model.parameters(), lr=lr)
+    loss_function = nn.MSELoss()
+    best, best_state, bad = float("inf"), None, 0  
+
+    for epoch in range(epochs):
+        model.train()
+        for xb, in train_dl:
+            opt.zero_grad()
+            loss = loss_function(model(xb), xb)
+            loss.backward()
+            opt.step()
+        model.eval()
+
+        # Skip gradient tracking during evaluation to save memory
+        with torch.no_grad():
+            val = loss_function(model(X_val), X_val).item()
+            if val < best:
+                best, bad = val, 0
+                best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
+            else:
+                bad += 1
+                if bad >= patience:
+                    break
+
+    model.load_state_dict(best_state)
+    model.eval()
+    return model

@@ -1,10 +1,14 @@
 import numpy as np
 import pandas as pd
-from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr, train_linreg, train_mlpr, predict_model, train_and_predict_sequence_reg, RecurrentRegressionModel, TransformerRegressorModel
+import torch
+from torch import nn
+from models import train_and_predict_nb, train_and_predict_knn, train_and_predict_rf, train_and_predict_mlpc, train_and_predict_linreg, train_and_predict_mlpr, train_linreg, train_mlpr, predict_model, train_and_predict_sequence_reg, RecurrentRegressionModel, TransformerRegressorModel, AutoEncoder, train_autoencoder
 from sklearn.metrics import balanced_accuracy_score, confusion_matrix, root_mean_squared_error, mean_absolute_error
 from numpy.lib.stride_tricks import sliding_window_view
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import make_pipeline
+from sklearn.decomposition import PCA, KernelPCA
 
 def _fit_and_scale(x_tr):
     # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
@@ -276,15 +280,20 @@ def problem2_sequence_variant(preprocessed_data:dict, seed:int):
         # X_test has len(test_df) windows; window j predicts test row j, so test_labels needs no slicing
 
         F = X_tr.shape[1]
-        models = {
-            "RNN":          RecurrentRegressionModel(F, rnn_type="rnn"),
-            "LSTM":         RecurrentRegressionModel(F, rnn_type="lstm"),
-            "GRU":          RecurrentRegressionModel(F, rnn_type="gru"),
-            "Transformer":  TransformerRegressorModel(F, seq_len=K),
+
+        # Make a list of all sequential models, but wait to build them so the seed can be set each time
+        builders = {
+            "RNN":          lambda: RecurrentRegressionModel(F, rnn_type="rnn"),
+            "LSTM":         lambda: RecurrentRegressionModel(F, rnn_type="lstm"),
+            "GRU":          lambda: RecurrentRegressionModel(F, rnn_type="gru"),
+            "Transformer":  lambda: TransformerRegressorModel(F, seq_len=K),
         }
 
+        # Iterate through all the regression models
         print(f"\n\n{city}")
-        for name, model in models.items():
+        for name, build in builders.items():
+            torch.manual_seed(seed)
+            model = build()
             scaled_pred = train_and_predict_sequence_reg(model, X_train, y_train, X_test, seed=seed)
             prediction = y_scaler.inverse_transform(scaled_pred.reshape(-1, 1)).ravel()          # back to real Output Power units
             rmse = root_mean_squared_error(Y_te, prediction)
@@ -306,10 +315,407 @@ def problem2_sequence_variant(preprocessed_data:dict, seed:int):
 # Visualize with 2-d t-SNE or UMAP scatter colored by class labels or Output-Power bins
 #   Do nearest neighbors in the embedding space to visualize class separability and structure. Also just inspect scatter for separated structure
 
-# Use PCA and/or Kernel PCA to reduce the dimensionality
+# Use PCA and/or Kernel PCA to reduce the dimensionality, then use an Autoencoder as the deep learning option
 
-def problem3_1(preprocessed_data:dict, seed:int):
-    print()
+def problem3_1_PCA(preprocessed_data:dict, d, seed:int):
+    # For Problem 1_1
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city].copy()
+
+        # Create Clear-Sky Index labels
+        df["Clear-Sky Index"] = df["GHI"] / df["Clearsky GHI"]
+        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"], right=False)
+
+        train_df = df.iloc[:int(len(df)*0.75)]
+        Y_tr = train_df['Sky Condition'].to_numpy()
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label
+        train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
+        test_df = df.iloc[int(len(df)*0.75):]
+        test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
+        Y_te = test_df['Sky Condition'].to_numpy()
+        
+        # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+        no_scaler = [c for c in train_features.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+        to_scale = [c for c in train_features.columns if c not in no_scaler]
+        # Reorder columns, so those scaled are first, set to return pandas df
+        scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+        scaler.set_output(transform="pandas")
+        X_tr = scaler.fit_transform(train_features)
+        X_te = scaler.transform(test_features)
+
+        # --------------------- PCA Here ----------------
+        dimension_reduction = PCA(n_components=d)
+        Z_tr = dimension_reduction.fit_transform(X_tr)
+        Z_te = dimension_reduction.transform(X_te)
+
+        # No columns to drop!
+        nb_predictions = train_and_predict_nb(Z_tr, Y_tr, Z_te)
+
+        classes = np.unique(Y_tr)
+        print("\n\nCity: ", city)
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
+
+        # KNN
+        knn_predictions = train_and_predict_knn(Z_tr, Y_tr, Z_te)
+
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
+
+        # Random Forest
+        rf_predictions = train_and_predict_rf(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
+
+        # MLP Classifier
+        mlpc_predictions = train_and_predict_mlpc(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
+
+
+    # For Problem 1_2
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city]
+        train_df = df.iloc[:int(len(df)*0.75)]
+
+        # Split the training data into terciles, 3 equally sized populations, based on output power
+        train_power = train_df['Output Power'].to_numpy()
+        power_tercile_boundaries = np.quantile(train_power, [1/3, 2/3])
+        # Use the boundaries to label each sample as 0 (low), 1 (medium), or 2 (high)
+        Y_tr = np.digitize(train_power, power_tercile_boundaries)
+
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year','Output Power'])
+
+        # Use the same boundaries to generate test labels
+        test_df = df.iloc[int(len(df)*0.75):]
+        test_power = test_df['Output Power'].to_numpy()
+        Y_te = np.digitize(test_power, power_tercile_boundaries)
+        test_features = test_df.drop(columns=['Year', 'Output Power'])
+
+        # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+        no_scaler = [c for c in train_features.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+        to_scale = [c for c in train_features.columns if c not in no_scaler]
+        # Reorder columns, so those scaled are first, set to return pandas df
+        scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+        scaler.set_output(transform="pandas")
+        X_tr = scaler.fit_transform(train_features)
+        X_te = scaler.transform(test_features)
+
+        # --------------------- PCA Here ----------------
+        dimension_reduction = PCA(n_components=d)
+        Z_tr = dimension_reduction.fit_transform(X_tr)
+        Z_te = dimension_reduction.transform(X_te)
+
+        # No columns to drop!
+        nb_predictions = train_and_predict_nb(Z_tr, Y_tr, Z_te)
+
+        classes = np.unique(Y_tr)
+        print("\n\nCity: ", city)
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
+
+        # KNN
+        knn_predictions = train_and_predict_knn(Z_tr, Y_tr, Z_te)
+
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
+
+        # Random Forest
+        rf_predictions = train_and_predict_rf(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
+
+        # MLP Classifier
+        mlpc_predictions = train_and_predict_mlpc(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
+
+# Now use Kernel PCA, Yay!
+def problem3_1_KPCA(preprocessed_data:dict, d, seed:int):
+    # For Problem 1_1
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city].copy()
+
+        # Create Clear-Sky Index labels
+        df["Clear-Sky Index"] = df["GHI"] / df["Clearsky GHI"]
+        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"], right=False)
+
+        train_df = df.iloc[:int(len(df)*0.75)]
+        Y_tr = train_df['Sky Condition'].to_numpy()
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label
+        train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
+        test_df = df.iloc[int(len(df)*0.75):]
+        test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
+        Y_te = test_df['Sky Condition'].to_numpy()
+        
+        # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+        no_scaler = [c for c in train_features.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+        to_scale = [c for c in train_features.columns if c not in no_scaler]
+        # Reorder columns, so those scaled are first, set to return pandas df
+        scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+        scaler.set_output(transform="pandas")
+        X_tr = scaler.fit_transform(train_features)
+        X_te = scaler.transform(test_features)
+
+        # -------------- KPCA Here -------------------
+        # Use rbf kernel, usually the best default option, simulates projecting up to an infinite dimension space
+        # Going to do a quick test for optimal value of gamma
+        dimension_reduction = KernelPCA(n_components=d, kernel="rbf", gamma=None, fit_inverse_transform=True, eigen_solver="randomized", random_state=seed)
+        
+        # KPCA creates a n x n kernel matrix when fitting, so with the larger data sets that will take up multiple GB of memory
+        # I ran out of memory. So we use a random sample of the training data, at maximum 3000 samples
+        rng = np.random.default_rng(seed=seed)
+        fit_idx = rng.choice(len(X_tr), size=min(3000, len(X_tr)), replace=False)
+        dimension_reduction.fit(X_tr.iloc[fit_idx])
+
+        # Now transform all training samples and test samples!
+        Z_tr = dimension_reduction.transform(X_tr) 
+        Z_te = dimension_reduction.transform(X_te)
+
+        # No columns to drop!
+        nb_predictions = train_and_predict_nb(Z_tr, Y_tr, Z_te)
+
+        classes = np.unique(Y_tr)
+        print("\n\nCity: ", city)
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
+
+        # KNN
+        knn_predictions = train_and_predict_knn(Z_tr, Y_tr, Z_te)
+
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
+
+        # Random Forest
+        rf_predictions = train_and_predict_rf(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
+
+        # MLP Classifier
+        mlpc_predictions = train_and_predict_mlpc(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
+
+
+    # For Problem 1_2
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city]
+        train_df = df.iloc[:int(len(df)*0.75)]
+
+        # Split the training data into terciles, 3 equally sized populations, based on output power
+        train_power = train_df['Output Power'].to_numpy()
+        power_tercile_boundaries = np.quantile(train_power, [1/3, 2/3])
+        # Use the boundaries to label each sample as 0 (low), 1 (medium), or 2 (high)
+        Y_tr = np.digitize(train_power, power_tercile_boundaries)
+
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year','Output Power'])
+
+        # Use the same boundaries to generate test labels
+        test_df = df.iloc[int(len(df)*0.75):]
+        test_power = test_df['Output Power'].to_numpy()
+        Y_te = np.digitize(test_power, power_tercile_boundaries)
+        test_features = test_df.drop(columns=['Year', 'Output Power'])
+
+        # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+        no_scaler = [c for c in train_features.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+        to_scale = [c for c in train_features.columns if c not in no_scaler]
+        # Reorder columns, so those scaled are first, set to return pandas df
+        scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+        scaler.set_output(transform="pandas")
+        X_tr = scaler.fit_transform(train_features)
+        X_te = scaler.transform(test_features)
+
+        # -------------- KPCA Here -------------------
+        # Use rbf kernel, usually the best default option, simulates projecting up to an infinite dimension space
+        # Going to do a quick test for optimal value of gamma
+        dimension_reduction = KernelPCA(n_components=d, kernel="rbf", gamma=None, fit_inverse_transform=True, eigen_solver="randomized", random_state=seed)
+        
+        # KPCA creates a n x n kernel matrix when fitting, so with the larger data sets that will take up multiple GB of memory
+        # I ran out of memory. So we use a random sample of the training data, at maximum 3000 samples
+        rng = np.random.default_rng(seed=seed)
+        fit_idx = rng.choice(len(X_tr), size=min(3000, len(X_tr)), replace=False)
+        dimension_reduction.fit(X_tr.iloc[fit_idx])
+
+        # Now transform all training samples and test samples!
+        Z_tr = dimension_reduction.transform(X_tr) 
+        Z_te = dimension_reduction.transform(X_te)
+
+        # No columns to drop!
+        nb_predictions = train_and_predict_nb(Z_tr, Y_tr, Z_te)
+
+        classes = np.unique(Y_tr)
+        print("\n\nCity: ", city)
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
+
+        # KNN
+        knn_predictions = train_and_predict_knn(Z_tr, Y_tr, Z_te)
+
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
+
+        # Random Forest
+        rf_predictions = train_and_predict_rf(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
+
+        # MLP Classifier
+        mlpc_predictions = train_and_predict_mlpc(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
+
+
+def problem3_1_AutoEn(preprocessed_data:dict, d, seed:int):
+    # For Problem 1_1
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city].copy()
+
+        # Create Clear-Sky Index labels
+        df["Clear-Sky Index"] = df["GHI"] / df["Clearsky GHI"]
+        df["Sky Condition"] = pd.cut(df["Clear-Sky Index"], bins=[-float("inf"), 0.4, 0.85, float("inf")], labels=["Cloudy", "Partly-Cloudy", "Clear"], right=False)
+
+        train_df = df.iloc[:int(len(df)*0.75)]
+        Y_tr = train_df['Sky Condition'].to_numpy()
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label
+        train_features = train_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
+        test_df = df.iloc[int(len(df)*0.75):]
+        test_features = test_df.drop(columns=['Year', 'GHI', 'Clearsky GHI', 'Sky Condition', "Clear-Sky Index"])
+        Y_te = test_df['Sky Condition'].to_numpy()
+        
+        # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+        no_scaler = [c for c in train_features.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+        to_scale = [c for c in train_features.columns if c not in no_scaler]
+        # Reorder columns, so those scaled are first, set to return pandas df
+        scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+        scaler.set_output(transform="pandas")
+        X_tr = scaler.fit_transform(train_features)
+        X_te = scaler.transform(test_features)
+
+        # -------------- Autoencoder Here -------------------
+        # Create and train autoencoder for chosen dimension transformation
+        torch.manual_seed(seed)
+        auto_encoder = train_autoencoder(AutoEncoder(X_tr.shape[1], d), X_tr, seed=seed)
+        with torch.no_grad():
+            t_tr = torch.as_tensor(X_tr.to_numpy(), dtype=torch.float32)
+            t_te = torch.as_tensor(X_te.to_numpy(), dtype=torch.float32)
+            # Reduce dimension of training and test features
+            Z_tr = auto_encoder.encode(t_tr).numpy()
+            Z_te = auto_encoder.encode(t_te).numpy()
+            reconstruction_mse = nn.functional.mse_loss(auto_encoder(t_te), t_te).item()
+
+        print("Reconstruction Error from AutoEncoder: ", reconstruction_mse)
+
+        # No columns to drop!
+        nb_predictions = train_and_predict_nb(Z_tr, Y_tr, Z_te)
+
+        classes = np.unique(Y_tr)
+        print("\n\nCity: ", city)
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
+
+        # KNN
+        knn_predictions = train_and_predict_knn(Z_tr, Y_tr, Z_te)
+
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
+
+        # Random Forest
+        rf_predictions = train_and_predict_rf(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
+
+        # MLP Classifier
+        mlpc_predictions = train_and_predict_mlpc(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
+
+
+    # For Problem 1_2
+    for city in preprocessed_data.keys():
+        # load preprocessed data for city, split into train/test sets, removing unapplicable features
+        df = preprocessed_data[city]
+        train_df = df.iloc[:int(len(df)*0.75)]
+
+        # Split the training data into terciles, 3 equally sized populations, based on output power
+        train_power = train_df['Output Power'].to_numpy()
+        power_tercile_boundaries = np.quantile(train_power, [1/3, 2/3])
+        # Use the boundaries to label each sample as 0 (low), 1 (medium), or 2 (high)
+        Y_tr = np.digitize(train_power, power_tercile_boundaries)
+
+        # Drop year - should not be used as a training feature for future predictions, drop all features that define the label, encoding existing features
+        train_features = train_df.drop(columns=['Year','Output Power'])
+
+        # Use the same boundaries to generate test labels
+        test_df = df.iloc[int(len(df)*0.75):]
+        test_power = test_df['Output Power'].to_numpy()
+        Y_te = np.digitize(test_power, power_tercile_boundaries)
+        test_features = test_df.drop(columns=['Year', 'Output Power'])
+
+        # One-hot encoded feaures and periodic encoded features do not need scaling, already constained to set ranges
+        no_scaler = [c for c in train_features.columns if c.startswith("Cloud_") or c.endswith(("_sin","_cos"))]
+        to_scale = [c for c in train_features.columns if c not in no_scaler]
+        # Reorder columns, so those scaled are first, set to return pandas df
+        scaler = ColumnTransformer([("num", StandardScaler(), to_scale)], remainder="passthrough", verbose_feature_names_out=False)
+        scaler.set_output(transform="pandas")
+        X_tr = scaler.fit_transform(train_features)
+        X_te = scaler.transform(test_features)
+
+        # -------------- Autoencoder Here -------------------
+        # Create and train autoencoder for chosen dimension transformation
+        torch.manual_seed(seed)
+        auto_encoder = train_autoencoder(AutoEncoder(X_tr.shape[1], d), X_tr, seed=seed)
+        with torch.no_grad():
+            t_tr = torch.as_tensor(X_tr.to_numpy(), dtype=torch.float32)
+            t_te = torch.as_tensor(X_te.to_numpy(), dtype=torch.float32)
+            # Reduce dimension of training and test features
+            Z_tr = auto_encoder.encode(t_tr).numpy()
+            Z_te = auto_encoder.encode(t_te).numpy()
+            reconstruction_mse = nn.functional.mse_loss(auto_encoder(t_te), t_te).item()
+
+        print("Reconstruction Error from AutoEncoder: ", reconstruction_mse)
+
+        # No columns to drop!
+        nb_predictions = train_and_predict_nb(Z_tr, Y_tr, Z_te)
+
+        classes = np.unique(Y_tr)
+        print("\n\nCity: ", city)
+        print("Naive Bayes Balanced Accuracy: ",balanced_accuracy_score(Y_te, nb_predictions))
+        print("Naive Bayes Confusion Matrix:\n",confusion_matrix(Y_te, nb_predictions, labels=classes))
+
+        # KNN
+        knn_predictions = train_and_predict_knn(Z_tr, Y_tr, Z_te)
+
+        print("KNN Balanced Accuracy: ",balanced_accuracy_score(Y_te, knn_predictions))
+        print("KNN Confusion Matrix:\n",confusion_matrix(Y_te, knn_predictions, labels=classes))
+
+        # Random Forest
+        rf_predictions = train_and_predict_rf(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("Random Forest Balanced Accuracy: ",balanced_accuracy_score(Y_te, rf_predictions))
+        print("Random Forest Confusion Matrix:\n",confusion_matrix(Y_te, rf_predictions, labels=classes))
+
+        # MLP Classifier
+        mlpc_predictions = train_and_predict_mlpc(Z_tr, Y_tr, Z_te, seed=seed)
+
+        print("MLP Balanced Accuracy: ",balanced_accuracy_score(Y_te, mlpc_predictions))
+        print("MLP Confusion Matrix:\n",confusion_matrix(Y_te, mlpc_predictions, labels=classes))
 
 def problem3_2(preprocessed_data:dict, seed:int):
     print()

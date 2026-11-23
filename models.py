@@ -120,7 +120,8 @@ class TransformerRegressorModel(nn.Module):
 
 def train_and_predict_sequence_reg(model, train_features, train_labels, test_features, seed, epochs=100, patience=10, lr=1e-3, batch_size=64, val_frac=0.15):
     torch.manual_seed(seed)
-    model.to("cpu")
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.to(device)
 
     # Create a chronological tail for validation on the training set
     n_val = int(len(train_features) * val_frac)
@@ -135,7 +136,7 @@ def train_and_predict_sequence_reg(model, train_features, train_labels, test_fea
     for epoch in range(epochs):
         model.train()
         for xb, yb in train_dl:
-            xb, yb = xb.to("cpu"), yb.to("cpu")
+            xb, yb = xb.to(device), yb.to(device)
             opt.zero_grad()
             loss = loss_function(model(xb), yb)
             loss.backward()
@@ -145,7 +146,7 @@ def train_and_predict_sequence_reg(model, train_features, train_labels, test_fea
         model.eval()
         # Skip gradient tracking during evaluation to save memory
         with torch.no_grad():
-            val = sum(loss_function(model(xb.to("cpu")), yb.to("cpu")).item() * len(xb) for xb, yb in val_dl) / n_val
+            val = sum(loss_function(model(xb.to(device)), yb.to(device)).item() * len(xb) for xb, yb in val_dl) / n_val
             if val < best:
                 best, bad = val, 0
                 best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
@@ -158,7 +159,7 @@ def train_and_predict_sequence_reg(model, train_features, train_labels, test_fea
     model.eval()
     # Again, skip gradient tracking during eval to save memory
     with torch.no_grad():
-        predictions = model(torch.as_tensor(test_features, dtype=torch.float32, device="cpu"))
+        predictions = model(torch.as_tensor(test_features, dtype=torch.float32, device=device))
     return predictions.cpu().numpy().ravel()
 
 class AutoEncoder(nn.Module):

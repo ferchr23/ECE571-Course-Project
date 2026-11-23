@@ -193,6 +193,9 @@ class AutoEncoder(nn.Module):
     def decode(self, z):
         return self.decoder(z)
 
+    def loss(self, x):
+        return nn.functional.mse_loss(self(x), x)
+
 def train_autoencoder(model, X_tr, seed, epochs=100, patience=10, lr=1e-3, batch_size=64, val_frac=0.15):
     torch.manual_seed(seed)
     X = torch.as_tensor(np.asarray(X_tr),dtype=torch.float32)
@@ -203,21 +206,20 @@ def train_autoencoder(model, X_tr, seed, epochs=100, patience=10, lr=1e-3, batch
     X_val = X[-n_val:]
 
     opt = torch.optim.Adam(model.parameters(), lr=lr)
-    loss_function = nn.MSELoss()
     best, best_state, bad = float("inf"), None, 0  
 
     for epoch in range(epochs):
         model.train()
         for xb, in train_dl:
             opt.zero_grad()
-            loss = loss_function(model(xb), xb)
+            loss = model.loss(xb)
             loss.backward()
             opt.step()
         model.eval()
 
         # Skip gradient tracking during evaluation to save memory
         with torch.no_grad():
-            val = loss_function(model(X_val), X_val).item()
+            val = model.loss(X_val).item()
             if val < best:
                 best, bad = val, 0
                 best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
@@ -229,3 +231,60 @@ def train_autoencoder(model, X_tr, seed, epochs=100, patience=10, lr=1e-3, batch
     model.load_state_dict(best_state)
     model.eval()
     return model
+
+class VariationalAutoEncoder(nn.Module):
+    def __init__(self, num_feats, target_d, beta=1.0):
+        super().__init__()
+        int_d1 = num_feats - int((num_feats - target_d)/2)
+        int_d2 = int_d1 - int((num_feats - target_d)/4)
+        self.beta = beta
+        # Same first 4 encoder layers as autoencoder
+        self.trunk = nn.Sequential(
+            nn.Linear(num_feats, int_d1),
+            nn.ReLU(),
+            nn.Linear(int_d1, int_d2),
+            nn.ReLU(),
+        )
+        # New encoding heads
+        self.mu_head = nn.Linear(int_d2, target_d)
+        self.logvar_head = nn.Linear(int_d2, target_d)
+
+        # Decoder is identical
+        self.decoder = nn.Sequential(
+            nn.Linear(target_d, int_d2),
+            nn.ReLU(),
+            nn.Linear(int_d2, int_d1),
+            nn.ReLU(),
+            nn.Linear(int_d1, num_feats)
+        )
+
+    # Apply encoding, returning both head outputs
+    def _posterior(self,x):
+        h = self.trunk(x)
+        return self.mu_head(h), self.logvar_head(h)
+
+    # Give just the mean head output
+    def encode(self,x):
+        mu, _ = self._posterior(x)
+        return mu
+
+    def decode(self, z):
+        return self.decoder(z)
+
+    def forward(self, x):
+        mu, logvar = self._posterior(x)
+        # Sample when training the model, as VAE predicts within a region of variance when training
+        if self.training:
+            z = mu + torch.randn_like(mu) * torch.exp(0.5 * logvar)
+        else:
+            # When not training, model just encodes to mean of prediction region
+            z = mu
+        return self.decode(z), mu, logvar
+
+    def loss(self, x):
+        recon, mu, logvar = self(x)
+        recon_loss = ((recon - x) ** 2).sum(dim=1).mean()  # per sample, batch mean
+        # Need a counterweight term to prevent VAE from converging back to a regular AE
+        kl = (-0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(dim=1)).mean()
+        return recon_loss + self.beta * kl
+

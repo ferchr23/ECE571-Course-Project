@@ -52,32 +52,25 @@ preprocessed_data = load_preprocessed_data(data_folder)
 
 # ----------- Problem 1: Supervised Classification -------------
 
-problem1_1(preprocessed_data, seed=SEEDS[0])
-problem1_2(preprocessed_data, seed=SEEDS[0])
+# problem1_1(preprocessed_data, seed=SEEDS[0])
+# problem1_2(preprocessed_data, seed=SEEDS[0])
 
 
 
 # ------------- Problem 2: Supervised Regression ---------------
 
-problem2_same_city(preprocessed_data, seed=SEEDS[0])
-problem2_cross_city(preprocessed_data, seed=SEEDS[0])
-problem2_sequence_variant(preprocessed_data, seed=SEEDS[0])
+# problem2_same_city(preprocessed_data, seed=SEEDS[0])
+# problem2_cross_city(preprocessed_data, seed=SEEDS[0])
+# problem2_sequence_variant(preprocessed_data, seed=SEEDS[0])
 
 # -------------- Problem 3: Dimension Reduction ----------------
-# problem3_1_PCA(preprocessed_data, d=10, seed=SEEDS[0])
-# problem3_1_KPCA(preprocessed_data, d=10, seed=SEEDS[0])
-# problem3_1_AutoEn(preprocessed_data, d=10, seed=SEEDS[0])
+problem3_1_PCA(preprocessed_data, d=10, seed=SEEDS[0])
+problem3_1_KPCA(preprocessed_data, d=10, seed=SEEDS[0])
+problem3_1_AutoEn(preprocessed_data, d=10, seed=SEEDS[0])
 
 # ----------- Problem 4: Semi-supervised Learning --------------
-# Pick base task (either problem 1 or 2)
-# Randomly withold labels so only 10%, 30%, and 50% of the data have labels for training
-# Test-set remains fully labeled for evaluation
 
-# Plot label-efficiency curve, comparing metric to % labels given
-# Compare model to a supervised-only model trained only on the % of data that has labels (ie ignore unlabeled data fro supervised baseline)
-#   Report gain over supervised-only at each fraction
-# Evaluate if at 10% labels, we outperform the supervised-only baseline
-# Area under curve (AUC) of label-efficiency curve
+
 
 # --------------- Problem 5: Transfer Learning -----------------
 # Source = Davis6, Target = Amhst3
